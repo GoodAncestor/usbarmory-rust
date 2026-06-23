@@ -1,0 +1,4 @@
+[toolchain]
+channel = "stable"
+profile = "minimal"
+targets = ["armv7a-none-eabi", "armv7a-none-eabihf"]

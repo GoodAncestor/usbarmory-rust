@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use nom::{branch, bytes::complete as bytes, number::complete as number, IResult};
+use nom::{branch, bytes::complete as bytes, number::complete as number, IResult, Parser};
 
 use crate::Hex;
 
@@ -47,12 +47,12 @@ impl Ivt {
     pub(crate) fn parse(input: &[u8]) -> IResult<&[u8], Self> {
         let (input, header) = Header::parse(input)?;
         let (input, entry) = number::le_u32(input)?;
-        let (input, _reserved1) = bytes::tag(&[0; 4])(input)?;
+        let (input, _reserved1) = bytes::tag(&[0; 4][..]).parse(input)?;
         let (input, dcd) = number::le_u32(input)?;
         let (input, boot) = number::le_u32(input)?;
         let (input, self_) = number::le_u32(input)?;
         let (input, csf) = number::le_u32(input)?;
-        let (input, _reserved2) = bytes::tag(&[0; 4])(input)?;
+        let (input, _reserved2) = bytes::tag(&[0; 4][..]).parse(input)?;
 
         Ok((
             input,
@@ -89,13 +89,13 @@ pub struct Header {
 
 impl Header {
     pub(crate) fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let (input, tag) = bytes::tag(&[TAG])(input)?;
+        let (input, tag) = bytes::tag(&[TAG][..]).parse(input)?;
         let (input, length) = number::be_u16(input)?;
         if length != LENGTH {
             todo!()
         }
         let (input, version) =
-            branch::alt((bytes::tag(&[VERSION0]), bytes::tag(&[VERSION1])))(input)?;
+            branch::alt((bytes::tag(&[VERSION0][..]), bytes::tag(&[VERSION1][..]))).parse(input)?;
 
         Ok((
             input,

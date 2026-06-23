@@ -8,14 +8,14 @@ mod dtd;
 mod token;
 mod util;
 
-use core::cell::RefCell;
+use core::{cell::RefCell, ptr};
 
 use cortex_a::register::cpsr;
 use heapless::Vec;
 use pac::{CCM_ANALOG, USBPHY1, USB_ANALOG, USB_UOG1};
 use typenum::marker_traits::Unsigned;
 
-use crate::{memlog, memlog_flush_and_reset};
+use crate::memlog;
 use dqh::dQH;
 use dtd::dTD;
 use util::Align2K;
@@ -57,7 +57,7 @@ impl Usbd {
 
             let mut dtds = Vec::new();
             unsafe {
-                for dtd in DTDS.iter_mut() {
+                for dtd in (*ptr::addr_of_mut!(DTDS)).iter_mut() {
                     dtds.push(dtd).ok().expect("UNREACHABLE");
                 }
             }
@@ -66,7 +66,7 @@ impl Usbd {
 
             let mut b64s = Vec::new();
             unsafe {
-                for b64 in B64S.iter_mut() {
+                for b64 in (*ptr::addr_of_mut!(B64S)).iter_mut() {
                     b64s.push(b64).ok().expect("UNREACHABLE");
                 }
             }
@@ -75,14 +75,14 @@ impl Usbd {
 
             let mut b512s = Vec::new();
             unsafe {
-                for b512 in B512S.iter_mut() {
+                for b512 in (*ptr::addr_of_mut!(B512S)).iter_mut() {
                     b512s.push(b512).ok().expect("UNREACHABLE");
                 }
             }
 
             // NOTE(unsafe) this code runs exactly once; this is an owning
             // pointer (it won't be aliased)
-            let endptlistaddr = unsafe { DQHS.inner.as_ptr() };
+            let endptlistaddr = unsafe { (*ptr::addr_of!(DQHS)).inner.as_ptr() };
 
             // # Configure the USB clock
             // NOTE based on tamago's [1] USB code: USBx.Init @ imx6/usb/bus.go

@@ -13,7 +13,7 @@ mod cmd;
 use core::{fmt, time::Duration};
 
 use crate::{
-    memlog, memlog_flush_and_reset,
+    memlog,
     storage::{Block, ManagedBlockDevice, BLOCK_SIZE},
     time::{self, Instant},
     util,
@@ -180,7 +180,7 @@ impl eMMC {
     /// consumes the `uSDHC2` peripheral
     // this implementation ought to support both the "eMMC" and "uSD" boot modes but it doesn't
     // work ATM
-    #[cfg(TODO = "eMMC_and_uSD_support")]
+    #[cfg(any())]
     pub fn take() -> Option<Result<Self, Error>> {
         uSDHC2::take().map(|usdhc| {
             let mut emmc = Self {
@@ -465,7 +465,7 @@ impl eMMC {
 
     /// Returns the card specific data of the card with the specified relative
     /// address
-    #[cfg(TODO = "eMMC_and_uSD_support")]
+    #[cfg(any())]
     fn identify_card(&self, rca: Rca) -> card::Csd {
         // a more general implementation would check this address against the
         // ones registered in `register_cards`

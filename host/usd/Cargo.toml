@@ -1,5 +1,5 @@
 [package]
-authors = ["iqlusion"]
+authors = ["GoodAncestor"]
 edition = "2018"
 license = "Apache-2.0 OR MIT"
 name    = "usd"
@@ -7,18 +7,24 @@ publish = false
 version = "0.0.0"
 
 [dependencies]
-anyhow = "1.0.27"
-arrayref = "0.3.6"
+anyhow = "1"
+arrayref = "0.3"
 image = { path = "../image" }
-rusb = "0.5.5"
-serialport = { version = "3.3.0" }
-xmas-elf = "0.7.0"
+rusb = "0.9"
+serialport = { version = "4.9", default-features = false }
+xmas-elf = "0.10"
 
-[dependencies.hidapi]
+[target.'cfg(target_os = "linux")'.dependencies.hidapi]
+default-features = false
+features = ["linux-static-libusb"]
 optional = true
-version = "1.2.1"
+version = "2.6"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies.hidapi]
+optional = true
+version = "2.6"
 
 [features]
-default = ["hidapi"]
+default = ["rusb-hid"]
 # alternative HID backend -- disable `hidapi' if you plan to use this one
 rusb-hid = []

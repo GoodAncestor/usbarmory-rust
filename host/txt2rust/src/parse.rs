@@ -14,7 +14,7 @@ pub struct Register<'a> {
     pub reset_value: u32,
 }
 
-pub fn register_table(txt: &str) -> Vec<Register> {
+pub fn register_table(txt: &str) -> Vec<Register<'_>> {
     let mut prev = None;
 
     let mut registers = vec![];

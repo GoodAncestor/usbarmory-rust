@@ -71,7 +71,7 @@ impl Usd {
             eprintln!("dcd_write(address={:#010x}, count={})", address, dcd.len());
         }
 
-        assert!(dcd.len() < u32::max_value() as usize);
+        assert!(dcd.len() < u32::MAX as usize);
 
         self.send_command(Command::DcdWrite {
             address,
@@ -153,7 +153,7 @@ impl Usd {
         Ok(u32::from_le_bytes(*array_ref!(resp, 1, 4)))
     }
 
-    #[cfg(untested)]
+    #[cfg(any())]
     pub fn skip_dcd_header(&mut self) -> Result<(), anyhow::Error> {
         if self.verbose {
             eprintln!("skip_dcd_header");
@@ -192,7 +192,7 @@ impl Usd {
             );
         }
 
-        assert!(data.len() < u32::max_value() as usize);
+        assert!(data.len() < u32::MAX as usize);
 
         self.send_command(Command::WriteFile {
             address,
@@ -236,7 +236,7 @@ impl Usd {
         Ok(())
     }
 
-    #[cfg(untested)]
+    #[cfg(any())]
     pub fn write_memory(&mut self, address: u32, data: Data) -> Result<(), anyhow::Error> {
         assert_eq!(address % 4, 0, "address must be 4-byte aligned");
 

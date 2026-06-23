@@ -16,7 +16,7 @@ use crate::{
         self, CipherMode, CipherSelect, Cmd, Control0, Control1, KeySelect, AES128_HW_CHANNEL,
         AES128_RAM_CHANNEL, STAT_ERROR_MASK,
     },
-    memlog, memlog_flush_and_reset, util,
+    memlog, util,
 };
 
 /// AES-128 channel

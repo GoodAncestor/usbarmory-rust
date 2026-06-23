@@ -91,7 +91,7 @@ impl BulkPair {
                                     continue 'iface;
                                 }
 
-                                let mut handle = dev.open()?;
+                                let handle = dev.open()?;
                                 handle.set_auto_detach_kernel_driver(true).or_else(|err| {
                                     if err == rusb::Error::NotSupported {
                                         Ok(())

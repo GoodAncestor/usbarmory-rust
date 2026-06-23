@@ -4,6 +4,7 @@
 use core::fmt;
 
 /// Card Specific Data
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Csd {
     read_block_size_log2: u8,
@@ -13,7 +14,7 @@ pub struct Csd {
     write_block_size_log2: u8,
 }
 
-#[cfg(TODO = "eMMC_and_uSD_support")]
+#[cfg(any())]
 impl Csd {
     /// Returns the version of the eMMC specification supported by the card
     pub fn version(&self) -> u8 {

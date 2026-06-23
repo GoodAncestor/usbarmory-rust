@@ -151,7 +151,7 @@ impl<D: ManagedBlockDevice> MbrDevice<D> {
                     return Err(MbrError::InvalidPartExtent);
                 }
 
-                if end > u64::from(u32::max_value()) {
+                if end > u64::from(u32::MAX) {
                     memlog!("PART end = {} (> u32 limit)", end);
                     return Err(MbrError::InvalidPartExtent);
                 }

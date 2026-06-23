@@ -19,7 +19,7 @@ use super::{
     util::{self, Data, OneIndices, Ref},
     Inner, Usbd, ENDPOINTS,
 };
-use crate::{memlog, memlog_flush_and_reset, time};
+use crate::{memlog, time};
 
 impl UsbBus for Usbd {
     fn alloc_ep(

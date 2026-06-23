@@ -1,33 +1,37 @@
-# usbarmory.rs <a href="https://www.iqlusion.io"><img src="https://storage.googleapis.com/iqlusion-production-web/img/logo/iqlusion-rings-sm.png" alt="iqlusion" width="24" height="24"></a>
+# usbarmory
 
-[![Crate][crate-image]][crate-link]
-[![Docs][docs-image]][docs-link]
-[![Build Status][build-image]][build-link]
 ![Apache 2.0 + MIT Licensed][license-image]
-![MSRV][msrv-image]
-[![Gitter Chat][gitter-image]][gitter-link]
+![Rust Stable][rust-image]
 
-Board support package for [USB armory Mk II devices][usbarmory]
-from [F-Secure].
+Board support package for running bare metal Rust applications, without an
+operating system, directly on the [USB armory Mk II][usbarmory] security device.
 
-<img src="https://storage.googleapis.com/iqlusion-production-web/github/usbarmory/usbarmory-mkII.png" alt="USB armory mkII" width="375" height="175">
+This crate is part of the GoodAncestor `usbarmory-rust` modernized fork.
 
-## Minimum Supported Rust Version
+## Rust Toolchain
 
-- Rust **1.42**
+This fork tracks current stable Rust. The repository root includes a
+`rust-toolchain.toml` that installs the bare-metal USB armory targets:
+
+- `armv7a-none-eabi`
+- `armv7a-none-eabihf`
+
+The current modernization pass was validated with Rust **1.96.0**.
 
 ## Status
 
-This project is an incomplete work-in-progress in an early developmental
-stage and will not be ready to use for some time.
+This project remains experimental bare-metal firmware support, but the current
+fork builds on stable Rust and has been smoke-tested through the USB Serial
+Downloader path on USB armory Mk II hardware.
 
 ## Build dependencies
 
 - [flip-lld], linker wrapper that adds zero-cost stack overflow protection.
   `cargo install --git https://github.com/japaric/flip-lld`.
 
-- `armv7a-none-eabi` compiler support. Install with `rustup target add
-  armv7a-none-eabi`.
+- `armv7a-none-eabi` compiler support. `rustup` installs this from the
+  repository root `rust-toolchain.toml`; otherwise install it manually with
+  `rustup target add armv7a-none-eabi`.
 
 - if using the `fs` API, which is gated behind the `fs` Cargo feature:
   `llvm-config`, `libclang` and 32-bit libc headers. On Arch you can install
@@ -44,9 +48,10 @@ stage and will not be ready to use for some time.
   `firmware` directory) and `rustup component add llvm-tools-preview` for the
   latter.
 
-- `libusb-1.0-dev` & `libudev-dev` are required to use the Cargo runner which
-  loads Rust programs on the Armory. Install them with `sudo apt-get install
-  libudev-dev libusb-1.0-dev` (Ubuntu).
+- `libusb-1.0-dev` is required to use the default Linux Cargo runner backend
+  which loads Rust programs on the Armory. Install it with
+  `sudo apt-get install libusb-1.0-dev` (Ubuntu). `libudev-dev` is only needed
+  if you opt into the alternate `hidapi` backend.
 
 - `usd-runner`, the Cargo runner mentioned in the previous bullet. Install it
   with `cd host/usd && cargo install --path .`. This will also install the
@@ -63,7 +68,15 @@ stage and will not be ready to use for some time.
 ``` rust
 $ # run this from the parent directory (`firmware`)
 $ # the source code of examples is at `firmware/examples`
-$ cargo build --example $example_name
+$ cargo build --example $example_name --release
+```
+
+The default example memory placement is OCRAM. On current stable Rust, some
+examples may no longer fit in OCRAM due to small code size changes. Use DRAM for
+the smoke-test path:
+
+``` console
+$ cargo build --example hello --release --no-default-features --features dram
 ```
 
 ## Running on QEMU
@@ -77,7 +90,7 @@ not on hardware. To run these example use the following QEMU command:
 (more details about QEMU & Rust, including debugging QEMU programs, can be found
 in the [Embedded Rust book][book])
 
-[book]: https://rust-embedded.github.io/book/start/qemu.html
+[book]: https://docs.rust-embedded.org/book/start/qemu.html
 
 ``` console
 $ # working directory: `firmware`
@@ -353,7 +366,7 @@ As the Armory HAL currently doesn't provide functionality to receive images from
 a PC and flash them into the internal eMMC we'll use [u-boot] to flash images
 into the eMMC.
 
-[u-boot]: https://www.denx.de/wiki/U-Boot
+[u-boot]: https://docs.u-boot-project.org/en/latest/
 
 ### Required hardware
 
@@ -370,14 +383,12 @@ Same steps as in the "Setting up a uSD Boot" version.
 
 ### Building U-Boot
 
-Clone U-Boot from `https://gitlab.denx.de/u-boot/u-boot.git` and check out the
-[`v2019.07`] tag, and obtain the following patches to add support for the USB
-Armory Mk II:
+Clone U-Boot from `https://source.denx.de/u-boot/u-boot.git` and check out the
+[`v2019.07`] tag, and obtain the USB armory Mk II board support patch:
 
 * [0001-ARM-mx6-add-support-for-USB-armory-Mk-II-board.patch][ubootpatch0]
-* [0001-Drop-linker-generated-array-creation-when-CONFIG_CMD.patch][ubootpatch1]
 
-Now apply both of them by running `git am < file.patch` while in the checked-out
+Apply it by running `git am < file.patch` while in the checked-out
 repository.
 
 Run `make usbarmory-mark-two_config` to use the default USB Armory
@@ -394,8 +405,7 @@ This should result in a `u-boot-dtb.imx` file, which contains the built U-Boot
 binary.
 
 [`v2019.07`]: https://github.com/u-boot/u-boot/releases/tag/v2019.07
-[ubootpatch0]: https://raw.githubusercontent.com/f-secure-foundry/usbarmory/master/software/u-boot/0001-ARM-mx6-add-support-for-USB-armory-Mk-II-board.patch
-[ubootpatch1]: https://raw.githubusercontent.com/f-secure-foundry/usbarmory/master/software/u-boot/0001-Drop-linker-generated-array-creation-when-CONFIG_CMD.patch
+[ubootpatch0]: https://raw.githubusercontent.com/usbarmory/usbarmory/master/software/u-boot/0001-ARM-mx6-add-support-for-USB-armory-Mk-II-board.patch
 
 ### Flashing the image
 
@@ -498,19 +508,15 @@ Now terminate the USB Mass Store Device emulation by pressing Ctrl-C in the
 Now you can plug the Armory into a USB-C port and it will run the program you
 just flashed.
 
-## Contributing
-
-If you are interested in contributing to this repository, please make sure to
-read the [CONTRIBUTING.md] and [CODE_OF_CONDUCT.md] files first.
-
 ## License
 
-Copyright © 2020 iqlusion
+Original work copyright © 2020 iqlusion.
+Modernization work copyright © GoodAncestor.
 
 Licensed under either of:
 
- * [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
- * [MIT license](http://opensource.org/licenses/MIT)
+ * [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+ * [MIT license](https://opensource.org/license/MIT)
 
 at your option.
 
@@ -522,23 +528,12 @@ without any additional terms or conditions.
 
 [//]: # (badges)
 
-[build-image]: https://github.com/iqlusioninc/usbarmory.rs/workflows/Rust/badge.svg?branch=develop&event=push
-[build-link]: https://github.com/iqlusioninc/usbarmory.rs/actions
-[crate-image]: https://img.shields.io/crates/v/usbarmory.svg
-[crate-link]: https://crates.io/crates/usbarmory
-[docs-image]: https://docs.rs/usbarmory/badge.svg
-[docs-link]: https://docs.rs/usbarmory/
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
-[msrv-image]: https://img.shields.io/badge/rustc-1.42+-blue.svg
-[gitter-image]: https://badges.gitter.im/iqlusioninc/community.svg
-[gitter-link]: https://gitter.im/iqlusioninc/community
+[rust-image]: https://img.shields.io/badge/rust-stable-blue.svg
 
 [//]: # (general links)
 
-[usbarmory]: https://github.com/f-secure-foundry/usbarmory/wiki
-[F-Secure]: https://foundry.f-secure.com/
+[usbarmory]: https://www.crowdsupply.com/f-secure/usb-armory-mk-ii
 [flip-lld]: https://github.com/japaric/flip-lld
-[CONTRIBUTING.md]: https://github.com/iqlusioninc/usbarmory.rs/blob/develop/CONTRIBUTING.md
-[CODE_OF_CONDUCT.md]: https://github.com/iqlusioninc/usbarmory.rs/blob/develop/CODE_OF_CONDUCT.md
 [Apache License, Version 2.0]: https://www.apache.org/licenses/LICENSE-2.0
-[MIT license]: https://opensource.org/licenses/MIT
+[MIT license]: https://opensource.org/license/MIT

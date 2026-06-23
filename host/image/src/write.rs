@@ -284,11 +284,7 @@ section not found in ELF file"
         }
 
         Ok(Image {
-            dcd: if skip_dcd {
-                None
-            } else {
-                Some(init_ddr())
-            },
+            dcd: if skip_dcd { None } else { Some(init_ddr()) },
             app,
             entry: start.ok_or_else(|| format_err!("symbol `_start` was not found"))?,
         })

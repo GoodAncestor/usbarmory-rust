@@ -121,8 +121,8 @@ impl fmt::Write for Logger {
     }
 }
 
-static mut L0: Buffer = unsafe { Buffer::new(N0, &mut B0 as *mut _ as *mut u8) };
-static mut L1: Buffer = unsafe { Buffer::new(N1, &mut B1 as *mut _ as *mut u8) };
+static mut L0: Buffer = unsafe { Buffer::new(N0, ptr::addr_of_mut!(B0).cast::<u8>()) };
+static mut L1: Buffer = unsafe { Buffer::new(N1, ptr::addr_of_mut!(B1).cast::<u8>()) };
 
 /// Implementation details
 #[doc(hidden)]
@@ -130,9 +130,9 @@ pub fn log(s: &str) {
     let bytes = s.as_bytes();
     unsafe {
         if in_main() {
-            L0.push(bytes);
+            (*ptr::addr_of!(L0)).push(bytes);
         } else {
-            L1.push(bytes);
+            (*ptr::addr_of!(L1)).push(bytes);
         }
     }
 }
@@ -147,8 +147,8 @@ pub fn peek(all: bool, f: impl FnOnce(&[u8]) -> usize) {
     unsafe {
         if all || in_main() {
             let mut f = Some(f);
-            L1.peek(&mut f);
-            L0.peek(&mut f);
+            (*ptr::addr_of!(L1)).peek(&mut f);
+            (*ptr::addr_of!(L0)).peek(&mut f);
         }
     }
 }

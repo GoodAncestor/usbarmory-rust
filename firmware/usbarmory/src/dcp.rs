@@ -14,7 +14,7 @@
 
 use core::{
     cell::{Cell, UnsafeCell},
-    ptr::NonNull,
+    ptr::{self, NonNull},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
@@ -88,7 +88,8 @@ fn init() -> bool {
         static mut CTXT: UnsafeCell<Context> = UnsafeCell::new(Context::empty());
 
         // install context
-        dcp.CONTEXT.write(unsafe { CTXT.get() as u32 });
+        dcp.CONTEXT
+            .write(unsafe { (*ptr::addr_of!(CTXT)).get() as u32 });
 
         true
     } else {

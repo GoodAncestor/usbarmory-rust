@@ -15,7 +15,7 @@ pub struct Device {
 
 impl Device {
     pub fn open() -> Result<Option<Self>, anyhow::Error> {
-        if let Some(mut handle) = rusb::open_device_with_vid_pid(VID, PID) {
+        if let Some(handle) = rusb::open_device_with_vid_pid(VID, PID) {
             let _ = handle.set_auto_detach_kernel_driver(true);
             handle.claim_interface(0)?;
             let address = handle.device().address();

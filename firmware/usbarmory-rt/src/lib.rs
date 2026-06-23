@@ -3,7 +3,10 @@
 #![no_std]
 #![warn(missing_docs, rust_2018_idioms, unused_qualifications)]
 
-use core::sync::atomic::{self, Ordering};
+use core::{
+    ptr,
+    sync::atomic::{self, Ordering},
+};
 
 use pac::GICC;
 
@@ -62,8 +65,12 @@ unsafe extern "C" fn start() -> ! {
         static _sidata: u32;
     }
 
-    r0::zero_bss(&mut _sbss, &mut _ebss);
-    r0::init_data(&mut _sdata, &mut _edata, &_sidata);
+    r0::zero_bss(ptr::addr_of_mut!(_sbss), ptr::addr_of_mut!(_ebss));
+    r0::init_data(
+        ptr::addr_of_mut!(_sdata),
+        ptr::addr_of_mut!(_edata),
+        ptr::addr_of!(_sidata),
+    );
 
     // ensure all the previous writes are committed before any of the following code (which may
     // access `.data`) is executed
@@ -122,10 +129,11 @@ extern "C" fn IRQ() {
         unsafe { *SPIS.get_unchecked((iid - 32) as usize) }
     } else {
         extern "C" {
-            fn DefaultHandler() -> !;
+            fn DefaultHandler();
         }
 
         unsafe { DefaultHandler() }
+        fatal()
     };
 
     unsafe {

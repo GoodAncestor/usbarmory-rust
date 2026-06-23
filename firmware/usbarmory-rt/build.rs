@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if host.ends_with("-apple-darwin") {
         println!("cargo:rustc-cfg=host_is_macos");
     }
+    println!("cargo:rustc-check-cfg=cfg(host_is_macos)");
 
     txt2rust(&out_dir)?;
 

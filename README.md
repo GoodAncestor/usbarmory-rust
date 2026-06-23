@@ -1,33 +1,42 @@
-# usbarmory.rs <a href="https://www.iqlusion.io"><img src="https://storage.googleapis.com/iqlusion-production-web/img/logo/iqlusion-rings-sm.png" alt="iqlusion" width="24" height="24"></a> [![Build Status][build-image]][build-link] ![Apache 2.0 + MIT Licensed][license-image] ![MSRV][msrv-image] [![Gitter Chat][gitter-image]][gitter-link]
+# usbarmory-rust
 
-<img src="https://storage.googleapis.com/iqlusion-production-web/github/usbarmory/usbarmory-ferris.png" alt="USB armory mkII" width="384" height="384">
+![Apache 2.0 + MIT Licensed][license-image]
+![Rust Stable][rust-image]
 
-Bare metal Rust development support for [USB armory Mk II devices][usbarmory]
-from [F-Secure].
+Support for running bare metal Rust applications, without an operating system,
+directly on the [USB armory Mk II][usbarmory] security device.
 
 ## Status
 
-Initial support for running bare metal Rust applications is now available.
+This is a modernized fork of the original `usbarmory.rs` codebase. It updates
+the project for current stable Rust and validates a USB Serial Downloader
+hardware smoke test on a USB armory Mk II.
 
 Check out the [`firmware/usbarmory`](firmware/usbarmory) directory.
 
-## Minimum Supported Rust Version
+For local hardware notes, see [`docs/hardware-test.md`](docs/hardware-test.md).
+For a summary of the modernization pass, see
+[`docs/modernization.md`](docs/modernization.md).
 
-- Rust **1.42**
+## Rust Toolchain
 
-## Contributing
+This fork tracks current stable Rust. The repository includes a
+`rust-toolchain.toml` that installs the bare-metal USB armory targets:
 
-If you are interested in contributing to this repository, please make sure to
-read the [CONTRIBUTING.md] and [CODE_OF_CONDUCT.md] files first.
+- `armv7a-none-eabi`
+- `armv7a-none-eabihf`
+
+The current modernization pass was validated with Rust **1.96.0**.
 
 ## License
 
-Copyright © 2020 iqlusion
+Original work copyright © 2020 iqlusion.
+Modernization work copyright © GoodAncestor.
 
 Licensed under either of:
 
- * [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
- * [MIT license](http://opensource.org/licenses/MIT)
+ * [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+ * [MIT license](https://opensource.org/license/MIT)
 
 at your option.
 
@@ -39,18 +48,11 @@ without any additional terms or conditions.
 
 [//]: # (badges)
 
-[build-image]: https://github.com/iqlusioninc/usbarmory.rs/workflows/Rust/badge.svg?branch=develop&event=push
-[build-link]: https://github.com/iqlusioninc/usbarmory.rs/actions
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
-[msrv-image]: https://img.shields.io/badge/rustc-1.42+-blue.svg
-[gitter-image]: https://badges.gitter.im/iqlusioninc/community.svg
-[gitter-link]: https://gitter.im/iqlusioninc/community
+[rust-image]: https://img.shields.io/badge/rust-stable-blue.svg
 
 [//]: # (general links)
 
-[usbarmory]: https://github.com/f-secure-foundry/usbarmory/wiki
-[F-Secure]: https://foundry.f-secure.com/
-[CONTRIBUTING.md]: https://github.com/iqlusioninc/usbarmory.rs/blob/develop/CONTRIBUTING.md
-[CODE_OF_CONDUCT.md]: https://github.com/iqlusioninc/usbarmory.rs/blob/develop/CODE_OF_CONDUCT.md
+[usbarmory]: https://www.crowdsupply.com/f-secure/usb-armory-mk-ii
 [Apache License, Version 2.0]: https://www.apache.org/licenses/LICENSE-2.0
-[MIT license]: https://opensource.org/licenses/MIT
+[MIT license]: https://opensource.org/license/MIT

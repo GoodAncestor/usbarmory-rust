@@ -1,4 +1,4 @@
-//! **usbarmory.rs**: board support package for USB armory mkII devices from F-Secure
+//! Bare-metal board support package for USB armory Mk II devices from F-Secure.
 //!
 //! # References
 //!
@@ -7,10 +7,7 @@
 //! - 'MX28RM' i.MX28 Applications Processor Reference Manual, Rev. 2, 08/2013 (MCIMX28RM)
 
 #![no_std]
-#![doc(
-    html_logo_url = "https://storage.googleapis.com/iqlusion-production-web/github/usbarmory/usbarmory-ferris.png",
-    html_root_url = "https://docs.rs/usbarmory/0.0.0"
-)]
+#![doc(html_root_url = "https://docs.rs/usbarmory/0.0.0")]
 #![warn(missing_docs, rust_2018_idioms, unused_qualifications)]
 
 #[cfg(feature = "fs")]
@@ -112,10 +109,10 @@ fn in_main() -> bool {
 /// NOTE this function will only panic if `debug_assertions` are enabled
 pub fn debug_timebox<T>(timeout: core::time::Duration, f: impl FnOnce() -> T) -> T {
     #[cfg(not(debug_assertions))]
-    drop(timeout);
+    let _ = timeout;
 
     #[cfg(debug_assertions)]
-    let start = crate::time::Instant::now();
+    let start = time::Instant::now();
     #[cfg(debug_assertions)]
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
@@ -127,7 +124,7 @@ pub fn debug_timebox<T>(timeout: core::time::Duration, f: impl FnOnce() -> T) ->
     #[cfg(debug_assertions)]
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     #[cfg(debug_assertions)]
-    let end = crate::time::Instant::now();
+    let end = time::Instant::now();
 
     #[cfg(debug_assertions)]
     assert!(

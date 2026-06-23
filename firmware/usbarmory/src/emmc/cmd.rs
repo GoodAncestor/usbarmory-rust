@@ -82,6 +82,7 @@ enum Type {
 }
 
 #[derive(PartialEq)]
+#[allow(dead_code)]
 pub enum Response {
     None,
     R1,

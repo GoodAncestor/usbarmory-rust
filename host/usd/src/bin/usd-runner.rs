@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{bail, format_err, Context};
 use image::write::Image;
-use serialport::{SerialPortSettings, SerialPortType};
+use serialport::SerialPortType;
 use xmas_elf::ElfFile;
 
 use usd::Usd;
@@ -98,15 +98,12 @@ fn redirect() -> Result<(), anyhow::Error> {
     const VID: u16 = 0x0403; // Future Technology Devices International, Ltd
     const PID: u16 = 0x6011; // FT4232H Quad HS USB-UART/FIFO IC
     const DEVNO: usize = 2; // device #3 is the one we want
-    // macOS' FTDI driver does NOT support 4 Mbps so use a lower speed
+                            // macOS' FTDI driver does NOT support 4 Mbps so use a lower speed
     #[cfg(target_os = "macos")]
     const BAUD_RATE: u32 = 3_000_000;
     #[cfg(not(target_os = "macos"))]
     const BAUD_RATE: u32 = 4_000_000;
     const BUFSZ: usize = 512; // the FT4232H uses 512B USB packets
-
-    let mut settings = SerialPortSettings::default();
-    settings.baud_rate = BAUD_RATE;
 
     let mut candidates = vec![];
     for info in serialport::available_ports()?.into_iter() {
@@ -120,7 +117,7 @@ fn redirect() -> Result<(), anyhow::Error> {
     candidates.sort();
 
     if let Some(path) = candidates.get(DEVNO) {
-        let mut serial = serialport::open_with_settings(path, &settings)?;
+        let mut serial = serialport::new(path, BAUD_RATE).open()?;
 
         let mut stdout = io::stdout();
         let mut buf = [0; BUFSZ];

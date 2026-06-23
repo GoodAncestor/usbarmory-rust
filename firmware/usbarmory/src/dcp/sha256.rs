@@ -12,7 +12,7 @@ use typenum::marker_traits::Unsigned;
 
 use crate::{
     dcp::{self, Cmd, Control0, Control1, HashSelect, SHA256_CHANNEL, STAT_ERROR_MASK},
-    memlog, memlog_flush_and_reset,
+    memlog,
     util::{self, Align4},
 };
 

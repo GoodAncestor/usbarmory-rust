@@ -1,5 +1,5 @@
 [package]
-authors = ["iqlusion"]
+authors = ["GoodAncestor"]
 edition = "2018"
 name    = "examples"
 version = "0.0.0"
@@ -45,8 +45,10 @@ package = "imx6ul-pac"
 path = "../imx6ul-pac"
 
 [dependencies.usbarmory]
-features = ["ocram"]
 path = "../usbarmory"
 
 [features]
+default = ["ocram"]
+dram = ["usbarmory/dram"]
 fs = ["usbarmory/fs", "littlefs2"]
+ocram = ["usbarmory/ocram"]

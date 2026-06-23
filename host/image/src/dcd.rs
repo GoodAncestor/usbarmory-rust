@@ -2,7 +2,9 @@
 
 use core::{convert::TryFrom, fmt};
 
-use nom::{bits::complete as bits, bytes::complete as bytes, number::complete as number, IResult};
+use nom::{
+    bits::complete as bits, bytes::complete as bytes, number::complete as number, IResult, Parser,
+};
 
 use crate::Hex;
 
@@ -74,12 +76,12 @@ impl Header {
     const TAG: u8 = 0xD2;
 
     fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let (input, tag) = bytes::tag(&[Self::TAG])(input)?;
+        let (input, tag) = bytes::tag(&[Self::TAG][..]).parse(input)?;
         let (input, length) = number::be_u16(input)?;
         if length > MAX_LENGTH {
             todo!("bubble up error")
         }
-        let (input, version) = bytes::tag(&[VERSION])(input)?;
+        let (input, version) = bytes::tag(&[VERSION][..]).parse(input)?;
 
         Ok((
             input,
@@ -189,9 +191,9 @@ impl WriteDataCommandHeader {
     const TAG: u8 = 0xCC;
 
     fn parse(input: &[u8]) -> IResult<&[u8], Self> {
-        let (input, tag) = bytes::tag(&[Self::TAG])(input)?;
+        let (input, tag) = bytes::tag(&[Self::TAG][..]).parse(input)?;
         let (input, length) = number::be_u16(input)?;
-        let (input, parameter) = nom::bits::bits(WriteDataCommandParameter::parse)(input)?;
+        let (input, parameter) = nom::bits::bits(WriteDataCommandParameter::parse).parse(input)?;
 
         Ok((
             input,
@@ -237,7 +239,7 @@ pub enum Bytes {
 
 impl Bytes {
     fn parse(input: (&[u8], usize)) -> IResult<(&[u8], usize), Self> {
-        let (input, bits): (_, u8) = bits::take(3usize)(input)?;
+        let (input, bits): (_, u8) = bits::take(3usize).parse(input)?;
         let bytes = if bits == 1 {
             Bytes::B1
         } else if bits == 2 {
@@ -266,8 +268,8 @@ pub enum Flags {
 
 impl Flags {
     fn parse(input: (&[u8], usize)) -> IResult<(&[u8], usize), Self> {
-        let (input, _zeros): (_, u8) = bits::tag(0b000, 3usize)(input)?;
-        let (input, flags): (_, u8) = bits::take(2usize)(input)?;
+        let (input, _zeros): (_, u8) = bits::tag(0b000, 3usize).parse(input)?;
+        let (input, flags): (_, u8) = bits::take(2usize).parse(input)?;
         let data_mask = flags & 0b01 != 0;
         let data_set = flags & 0b10 != 0;
         let flags = if data_mask {
