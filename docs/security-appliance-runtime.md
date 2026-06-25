@@ -18,6 +18,8 @@ Initial scaffolding now lives under `runtime/`:
 - `runtime/appliance-example`: a tiny host-tested appliance showing how shared
   state-machine code can depend only on those traits. It now includes a minimal
   command appliance over the transport layer.
+- `runtime/appliance-ssh-agent`: a `no_std` host-tested SSH-agent state-machine
+  scaffold for public-key, fingerprint, status, and sign-request behavior.
 
 Run the current checks with:
 
@@ -151,6 +153,17 @@ Use the existing Go SSH-agent appliance as the behavioral reference:
 
 Start with the protocol/state-machine crates and host tests before binding to
 either USB or virtio networking.
+
+The first Rust SSH-agent scaffold now models:
+
+- `GET /pubkey`
+- `GET /fingerprint`
+- `GET /status`
+- `SIGN <message>`
+
+It deliberately does not yet choose an ed25519 implementation or persistence
+backend; those stay behind traits so the same state machine can run on USB
+Armory hardware, Spectrum VMs, and host fuzz tests.
 
 Immediate TODOs:
 

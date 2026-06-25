@@ -381,6 +381,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn command_appliance_handles_repeated_requests() {
+        let mut platform = TestPlatform::new(b"PING\n");
+        let mut app = CommandAppliance::<64, 128, 16>::new();
+
+        app.poll(&mut platform).unwrap();
+        assert_eq!(platform.network.sent(), b"200 pong\n");
+
+        platform.network.set_request(b"GET /identity\n");
+        app.poll(&mut platform).unwrap();
+        assert_eq!(
+            platform.network.sent(),
+            b"200 model=test-appliance id=0102fe\n"
+        );
+    }
+
+    #[test]
+    fn command_appliance_reports_link_state_transition() {
+        let mut platform = TestPlatform::new(b"GET /network\n");
+        platform.network.link = LinkState::Down;
+        let mut app = CommandAppliance::<64, 128, 16>::new();
+
+        app.poll(&mut platform).unwrap();
+        assert_eq!(
+            platform.network.sent(),
+            b"200 link=down mac=1a:55:89:a2:69:42 ip=10.0.0.1/24 gw=10.0.0.2 mtu=1500\n"
+        );
+
+        platform.network.link = LinkState::Up;
+        platform.network.set_request(b"GET /network\n");
+        app.poll(&mut platform).unwrap();
+        assert_eq!(
+            platform.network.sent(),
+            b"200 link=up mac=1a:55:89:a2:69:42 ip=10.0.0.1/24 gw=10.0.0.2 mtu=1500\n"
+        );
+    }
+
     struct TestNetwork {
         request: [u8; 64],
         request_len: usize,

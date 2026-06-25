@@ -2,6 +2,7 @@
 members = [
   "appliance-core",
   "appliance-example",
+  "appliance-ssh-agent",
 ]
 resolver = "2"
 

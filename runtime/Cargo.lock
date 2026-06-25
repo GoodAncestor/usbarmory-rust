@@ -12,3 +12,10 @@ version = "0.1.0"
 dependencies = [
  "appliance-core",
 ]
+
+[[package]]
+name = "appliance-ssh-agent"
+version = "0.1.0"
+dependencies = [
+ "appliance-core",
+]
