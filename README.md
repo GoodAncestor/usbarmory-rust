@@ -17,6 +17,9 @@ Check out the [`firmware/usbarmory`](firmware/usbarmory) directory.
 For local hardware notes, see [`docs/hardware-test.md`](docs/hardware-test.md).
 For a summary of the modernization pass, see
 [`docs/modernization.md`](docs/modernization.md).
+For the portable Rust/Spectrum security-appliance runtime direction, see
+[`docs/security-appliance-runtime.md`](docs/security-appliance-runtime.md) and
+the host-tested crates under [`runtime/`](runtime).
 
 ## Rust Toolchain
 
