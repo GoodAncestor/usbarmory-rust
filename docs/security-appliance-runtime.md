@@ -19,7 +19,8 @@ Initial scaffolding now lives under `runtime/`:
   state-machine code can depend only on those traits. It now includes a minimal
   command appliance over the transport layer.
 - `runtime/appliance-ssh-agent`: a `no_std` host-tested SSH-agent state-machine
-  scaffold for public-key, fingerprint, status, and sign-request behavior.
+  scaffold for identity listing, framed OpenSSH agent sign requests, signing
+  counters, and last-error status.
 
 Run the current checks with:
 
@@ -85,7 +86,7 @@ framing.
 
 | Target | First transport | Current runtime binding | Next concrete task |
 | --- | --- | --- | --- |
-| Linux host tests | in-memory fake network | command appliance unit tests | add parser fuzz/property tests |
+| Linux host tests | in-memory fake network | command and SSH-agent unit tests | add parser fuzz/property tests |
 | USB Armory Mk II | USB CDC-ECM/NCM frames | `NetworkRx`/`NetworkTx` trait target | expose multi-endpoint USB network frames |
 | Spectrum VM amd64 | virtio-net or vsock | `TransportRx`/`TransportTx` trait target | boot serial-only Rust kernel, then add virtio transport |
 | Spectrum VM aarch64 | virtio-net or vsock | planned trait target | confirm Cloud Hypervisor boot ABI on Asahi host |
@@ -154,22 +155,32 @@ Use the existing Go SSH-agent appliance as the behavioral reference:
 Start with the protocol/state-machine crates and host tests before binding to
 either USB or virtio networking.
 
-The first Rust SSH-agent scaffold now models the OpenSSH agent payload shape:
+The first Rust SSH-agent scaffold now models the OpenSSH agent wire shape:
 
 - `SSH_AGENTC_REQUEST_IDENTITIES` (`11`)
 - `SSH_AGENT_IDENTITIES_ANSWER` (`12`)
 - `SSH_AGENTC_SIGN_REQUEST` (`13`)
 - `SSH_AGENT_SIGN_RESPONSE` (`14`)
+- 4-byte big-endian OpenSSH agent frame lengths at the appliance boundary.
+- status fields for signing policy, sign count, last sign time in monotonic
+  milliseconds, last sign byte count, and last signing error.
 
 It deliberately does not yet choose an ed25519 implementation or persistence
 backend; those stay behind traits so the same state machine can run on USB
 Armory hardware, Spectrum VMs, and host fuzz tests.
 
+The Rust agent can now be tested against actual agent-frame inputs in host
+tests. The remaining transport work is backend binding: move bytes between
+USB CDC-ECM/NCM, virtio-net, or vsock and the `TransportRx`/`TransportTx`
+traits without changing the SSH-agent state machine.
+
 Immediate TODOs:
 
-- Replace the example command syntax with a versioned binary or HTTP-like
-  envelope once transport backends can pass frames end to end.
+- Add parser fuzz/property tests for SSH-agent frame lengths, string lengths,
+  unsupported message types, and repeated sign failures.
 - Add explicit storage wipe and attestation traits before the SSH-agent
   behavior is ported.
+- Add a host executable that proxies a Unix `SSH_AUTH_SOCK` into the Rust
+  state machine for protocol compatibility testing against `ssh-add`.
 - Keep backend work in board/VM crates; keep `appliance-core` free of USB,
   virtio, allocator, and OS assumptions.

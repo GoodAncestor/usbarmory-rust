@@ -1,7 +1,8 @@
 #![no_std]
 
-use appliance_core::{Appliance, Error, Platform, Result, TransportRx, TransportTx};
+use appliance_core::{Appliance, Clock, Error, Platform, Result, TransportRx, TransportTx};
 
+pub const AGENT_FRAME_HEADER_LEN: usize = 4;
 pub const MSG_FAILURE: u8 = 5;
 pub const MSG_REQUEST_IDENTITIES: u8 = 11;
 pub const MSG_IDENTITIES_ANSWER: u8 = 12;
@@ -18,14 +19,24 @@ pub struct AgentStatus {
     pub key_present: bool,
     pub key_source: &'static str,
     pub storage_backend: &'static str,
+    pub sign_policy: &'static str,
+    pub sign_count: u64,
+    pub last_sign_millis: u64,
+    pub last_sign_bytes: usize,
+    pub last_sign_error: Option<&'static str>,
 }
 
-pub struct SshAgentAppliance<K, const RX: usize = 256, const TX: usize = 512> {
+pub struct SshAgentAppliance<
+    K,
+    const RX: usize = 256,
+    const TX: usize = 512,
+    const FRAME: usize = 1024,
+> {
     key: K,
     status: AgentStatus,
 }
 
-impl<K, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
+impl<K, const RX: usize, const TX: usize, const FRAME: usize> SshAgentAppliance<K, RX, TX, FRAME> {
     pub const fn new(key: K, status: AgentStatus) -> Self {
         Self { key, status }
     }
@@ -41,22 +52,40 @@ impl<K, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
     pub fn key_mut(&mut self) -> &mut K {
         &mut self.key
     }
+
+    pub fn record_sign_success(&mut self, bytes: usize, monotonic_millis: u64) {
+        self.status.sign_count += 1;
+        self.status.last_sign_millis = monotonic_millis;
+        self.status.last_sign_bytes = bytes;
+        self.status.last_sign_error = None;
+    }
+
+    pub fn record_sign_failure(&mut self, reason: &'static str) {
+        self.status.last_sign_error = Some(reason);
+    }
 }
 
-impl<K: AgentKey, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
-    fn handle_agent_payload<'a>(
+impl<K: AgentKey, const RX: usize, const TX: usize, const FRAME: usize>
+    SshAgentAppliance<K, RX, TX, FRAME>
+{
+    pub fn handle_agent_payload<'a>(
         &mut self,
         request: &[u8],
         response: &'a mut [u8],
+        monotonic_millis: u64,
     ) -> Result<&'a [u8]> {
         let Some((&message_type, body)) = request.split_first() else {
+            self.record_sign_failure("empty request");
             return failure(response);
         };
 
         match message_type {
             MSG_REQUEST_IDENTITIES => self.identities_answer(response),
-            MSG_SIGN_REQUEST => self.sign_response(body, response),
-            _ => failure(response),
+            MSG_SIGN_REQUEST => self.sign_response(body, response, monotonic_millis),
+            _ => {
+                self.record_sign_failure("unsupported message");
+                failure(response)
+            }
         }
     }
 
@@ -80,18 +109,27 @@ impl<K: AgentKey, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX>
         Ok(&out[..len])
     }
 
-    fn sign_response<'a>(&mut self, body: &[u8], out: &'a mut [u8]) -> Result<&'a [u8]> {
+    fn sign_response<'a>(
+        &mut self,
+        body: &[u8],
+        out: &'a mut [u8],
+        monotonic_millis: u64,
+    ) -> Result<&'a [u8]> {
         if !self.status.key_present {
+            self.record_sign_failure("key unavailable");
             return failure(out);
         }
 
         let Some((key_blob, body)) = read_string(body) else {
+            self.record_sign_failure("malformed key blob");
             return failure(out);
         };
         let Some((message, body)) = read_string(body) else {
+            self.record_sign_failure("malformed sign data");
             return failure(out);
         };
         if body.len() < 4 {
+            self.record_sign_failure("missing sign flags");
             return failure(out);
         }
         let flags = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
@@ -99,6 +137,7 @@ impl<K: AgentKey, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX>
         let mut expected_key = [0; TX];
         let expected_key = self.key.public_key_blob(&mut expected_key)?;
         if expected_key != key_blob {
+            self.record_sign_failure("unknown key");
             return failure(out);
         }
 
@@ -113,25 +152,71 @@ impl<K: AgentKey, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX>
 
         push(out, &mut len, MSG_SIGN_RESPONSE)?;
         write_string(out, &mut len, &wire[..wire_len])?;
+        self.record_sign_success(message.len(), monotonic_millis);
         Ok(&out[..len])
     }
 }
 
-impl<P: Platform, K: AgentKey, const RX: usize, const TX: usize> Appliance<P>
-    for SshAgentAppliance<K, RX, TX>
+impl<P: Platform, K: AgentKey, const RX: usize, const TX: usize, const FRAME: usize> Appliance<P>
+    for SshAgentAppliance<K, RX, TX, FRAME>
 {
     fn poll(&mut self, platform: &mut P) -> Result<()> {
+        let mut frame = [0; FRAME];
         let mut request = [0; RX];
-        let request_len = match platform.network().receive(&mut request) {
-            Ok(len) => len,
+        let request = match receive_agent_frame(platform.network(), &mut frame, &mut request) {
+            Ok(request) => request,
             Err(Error::NotPresent) => return Ok(()),
             Err(err) => return Err(err),
         };
         let mut response = [0; TX];
-        let response = self.handle_agent_payload(&request[..request_len], &mut response)?;
+        let now = platform.clock().monotonic_millis();
+        let response = self.handle_agent_payload(request, &mut response, now)?;
 
-        platform.network().transmit(response)
+        transmit_agent_frame(platform.network(), &mut frame, response)
     }
+}
+
+pub fn receive_agent_frame<'a, T: TransportRx>(
+    transport: &mut T,
+    frame: &mut [u8],
+    payload: &'a mut [u8],
+) -> Result<&'a [u8]> {
+    let frame_len = transport.receive(frame)?;
+    if frame_len < AGENT_FRAME_HEADER_LEN {
+        return Err(Error::InvalidInput);
+    }
+
+    let payload_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+    let available = frame_len - AGENT_FRAME_HEADER_LEN;
+    if payload_len > available {
+        return Err(Error::InvalidInput);
+    }
+    if payload_len > payload.len() {
+        return Err(Error::BufferTooSmall);
+    }
+
+    payload[..payload_len]
+        .copy_from_slice(&frame[AGENT_FRAME_HEADER_LEN..AGENT_FRAME_HEADER_LEN + payload_len]);
+    Ok(&payload[..payload_len])
+}
+
+pub fn transmit_agent_frame<T: TransportTx>(
+    transport: &mut T,
+    frame: &mut [u8],
+    payload: &[u8],
+) -> Result<()> {
+    if payload.len() > u32::MAX as usize {
+        return Err(Error::InvalidInput);
+    }
+
+    let frame_len = AGENT_FRAME_HEADER_LEN + payload.len();
+    if frame_len > frame.len() {
+        return Err(Error::BufferTooSmall);
+    }
+
+    frame[..AGENT_FRAME_HEADER_LEN].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame[AGENT_FRAME_HEADER_LEN..frame_len].copy_from_slice(payload);
+    transport.transmit(&frame[..frame_len])
 }
 
 fn failure(out: &mut [u8]) -> Result<&[u8]> {
@@ -200,24 +285,32 @@ mod tests {
 
     #[test]
     fn answers_identity_request() {
-        let mut platform = TestPlatform::new(&[MSG_REQUEST_IDENTITIES]);
+        let mut platform = TestPlatform::new(&agent_frame(&[MSG_REQUEST_IDENTITIES]));
         let mut app = test_app();
 
         app.poll(&mut platform).unwrap();
 
         let expected = agent_identities_answer(b"key-blob", b"armory@test");
-        assert_eq!(platform.network.sent(), expected.as_slice());
+        assert_eq!(
+            platform.network.sent(),
+            agent_frame(expected.as_slice()).as_slice()
+        );
     }
 
     #[test]
     fn answers_empty_identity_request_when_key_absent() {
-        let mut platform = TestPlatform::new(&[MSG_REQUEST_IDENTITIES]);
-        let mut app = SshAgentAppliance::<TestKey, 128, 256>::new(
+        let mut platform = TestPlatform::new(&agent_frame(&[MSG_REQUEST_IDENTITIES]));
+        let mut app = SshAgentAppliance::<TestKey, 128, 256, 512>::new(
             TestKey,
             AgentStatus {
                 key_present: false,
                 key_source: "none",
                 storage_backend: "mmc",
+                sign_policy: "allow",
+                sign_count: 0,
+                last_sign_millis: 0,
+                last_sign_bytes: 0,
+                last_sign_error: None,
             },
         );
 
@@ -225,40 +318,80 @@ mod tests {
 
         assert_eq!(
             platform.network.sent(),
-            &[MSG_IDENTITIES_ANSWER, 0, 0, 0, 0]
+            agent_frame(&[MSG_IDENTITIES_ANSWER, 0, 0, 0, 0]).as_slice()
         );
     }
 
     #[test]
     fn signs_agent_request() {
         let request = agent_sign_request(b"key-blob", b"hello", 0);
-        let mut platform = TestPlatform::new(request.as_slice());
+        let mut platform = TestPlatform::new(&agent_frame(request.as_slice()));
         let mut app = test_app();
+        platform.clock.millis = 42;
 
         app.poll(&mut platform).unwrap();
 
         let expected = agent_sign_response(b"sig:hello:0");
-        assert_eq!(platform.network.sent(), expected.as_slice());
+        assert_eq!(
+            platform.network.sent(),
+            agent_frame(expected.as_slice()).as_slice()
+        );
+        assert_eq!(app.status().sign_count, 1);
+        assert_eq!(app.status().last_sign_millis, 42);
+        assert_eq!(app.status().last_sign_bytes, 5);
+        assert_eq!(app.status().last_sign_error, None);
     }
 
     #[test]
     fn rejects_unknown_signing_key() {
         let request = agent_sign_request(b"other-key", b"hello", 0);
-        let mut platform = TestPlatform::new(request.as_slice());
+        let mut platform = TestPlatform::new(&agent_frame(request.as_slice()));
         let mut app = test_app();
 
         app.poll(&mut platform).unwrap();
 
-        assert_eq!(platform.network.sent(), &[MSG_FAILURE]);
+        assert_eq!(
+            platform.network.sent(),
+            agent_frame(&[MSG_FAILURE]).as_slice()
+        );
+        assert_eq!(app.status().sign_count, 0);
+        assert_eq!(app.status().last_sign_error, Some("unknown key"));
     }
 
-    fn test_app() -> SshAgentAppliance<TestKey, 128, 256> {
+    #[test]
+    fn rejects_malformed_agent_frame() {
+        let mut transport = TestNetwork::new(&[0, 0, 0, 10, MSG_REQUEST_IDENTITIES]);
+        let mut frame = [0; 32];
+        let mut payload = [0; 8];
+
+        assert_eq!(
+            receive_agent_frame(&mut transport, &mut frame, &mut payload),
+            Err(Error::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn transmits_agent_frame() {
+        let mut transport = TestNetwork::new(&[]);
+        let mut frame = [0; 32];
+
+        transmit_agent_frame(&mut transport, &mut frame, &[MSG_FAILURE]).unwrap();
+
+        assert_eq!(transport.sent(), &[0, 0, 0, 1, MSG_FAILURE]);
+    }
+
+    fn test_app() -> SshAgentAppliance<TestKey, 128, 256, 512> {
         SshAgentAppliance::new(
             TestKey,
             AgentStatus {
                 key_present: true,
                 key_source: "storage",
                 storage_backend: "mmc",
+                sign_policy: "allow",
+                sign_count: 0,
+                last_sign_millis: 0,
+                last_sign_bytes: 0,
+                last_sign_error: None,
             },
         )
     }
@@ -340,6 +473,13 @@ mod tests {
     fn append_vec_string(out: &mut std::vec::Vec<u8>, value: &[u8]) {
         out.extend_from_slice(&(value.len() as u32).to_be_bytes());
         out.extend_from_slice(value);
+    }
+
+    fn agent_frame(payload: &[u8]) -> std::vec::Vec<u8> {
+        let mut out = std::vec::Vec::new();
+        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        out.extend_from_slice(payload);
+        out
     }
 
     struct TestNetwork {
