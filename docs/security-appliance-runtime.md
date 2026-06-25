@@ -13,7 +13,8 @@ Recommended split:
 Initial scaffolding now lives under `runtime/`:
 
 - `runtime/appliance-core`: `no_std` platform traits for entropy, identity,
-  sealed storage, presence, clock, network I/O, and app-facing transport I/O.
+  sealed storage, presence, clock, network configuration/control, network I/O,
+  and app-facing transport I/O.
 - `runtime/appliance-example`: a tiny host-tested appliance showing how shared
   state-machine code can depend only on those traits. It now includes a minimal
   command appliance over the transport layer.
@@ -58,6 +59,8 @@ trait Presence {
 
 Current runtime layering:
 
+- `NetworkControl`: backend-facing MAC, IPv4 CIDR, gateway, MTU, and link-state
+  contract for CDC Ethernet, virtio-net, vsock shims, or host-test fakes.
 - `NetworkRx`/`NetworkTx`: backend-facing raw frame or packet movement.
 - `TransportRx`/`TransportTx`: appliance-facing request/response movement with
   blanket implementations for network devices.
@@ -68,6 +71,7 @@ The command example is intentionally small and fixed-buffered. It accepts:
 
 - `PING`
 - `GET /identity`
+- `GET /network`
 - `GET /sealed`
 - `PUT /sealed <bytes>`
 

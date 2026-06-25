@@ -35,6 +35,71 @@ pub trait Clock {
     fn monotonic_millis(&self) -> u64;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MacAddress([u8; 6]);
+
+impl MacAddress {
+    pub const fn new(octets: [u8; 6]) -> Self {
+        Self(octets)
+    }
+
+    pub const fn octets(&self) -> [u8; 6] {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ipv4Address([u8; 4]);
+
+impl Ipv4Address {
+    pub const fn new(octets: [u8; 4]) -> Self {
+        Self(octets)
+    }
+
+    pub const fn octets(&self) -> [u8; 4] {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ipv4Cidr {
+    pub address: Ipv4Address,
+    pub prefix_len: u8,
+}
+
+impl Ipv4Cidr {
+    pub const fn new(address: Ipv4Address, prefix_len: u8) -> Self {
+        Self {
+            address,
+            prefix_len,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NetworkConfig {
+    pub mac: MacAddress,
+    pub ipv4: Ipv4Cidr,
+    pub gateway: Option<Ipv4Address>,
+    pub mtu: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkState {
+    Down,
+    Up,
+}
+
+pub trait NetworkControl {
+    fn configure(&mut self, config: NetworkConfig) -> Result<()>;
+    fn config(&self) -> Result<NetworkConfig>;
+    fn link_state(&mut self) -> Result<LinkState>;
+
+    fn poll_link(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 pub trait NetworkRx {
     fn recv(&mut self, out: &mut [u8]) -> Result<usize>;
 }
@@ -43,9 +108,9 @@ pub trait NetworkTx {
     fn send(&mut self, frame: &[u8]) -> Result<()>;
 }
 
-pub trait NetworkDevice: NetworkRx + NetworkTx {}
+pub trait NetworkDevice: NetworkControl + NetworkRx + NetworkTx {}
 
-impl<T> NetworkDevice for T where T: NetworkRx + NetworkTx {}
+impl<T> NetworkDevice for T where T: NetworkControl + NetworkRx + NetworkTx {}
 
 pub trait TransportRx {
     fn receive(&mut self, out: &mut [u8]) -> Result<usize>;
@@ -275,6 +340,20 @@ impl Clock for StaticClock {
 }
 
 pub struct NullNetwork;
+
+impl NetworkControl for NullNetwork {
+    fn configure(&mut self, _config: NetworkConfig) -> Result<()> {
+        Err(Error::NotSupported)
+    }
+
+    fn config(&self) -> Result<NetworkConfig> {
+        Err(Error::NotPresent)
+    }
+
+    fn link_state(&mut self) -> Result<LinkState> {
+        Ok(LinkState::Down)
+    }
+}
 
 impl NetworkRx for NullNetwork {
     fn recv(&mut self, _out: &mut [u8]) -> Result<usize> {

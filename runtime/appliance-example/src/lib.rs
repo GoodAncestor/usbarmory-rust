@@ -1,8 +1,9 @@
 #![no_std]
 
 use appliance_core::{
-    receive_message, transmit_message, Appliance, DeviceIdentity, Error, Platform, Presence,
-    Result, SealedStorage, TransportRx, TransportTx,
+    receive_message, transmit_message, Appliance, DeviceIdentity, Error, Ipv4Address, LinkState,
+    MacAddress, NetworkControl, Platform, Presence, Result, SealedStorage, TransportRx,
+    TransportTx,
 };
 
 pub const KEY_SLOT: u32 = 1;
@@ -91,6 +92,39 @@ impl<const RX: usize, const TX: usize, const SCRATCH: usize> CommandAppliance<RX
         platform.storage().write(COMMAND_SLOT, data)
     }
 
+    fn write_network<'a, P: Platform>(platform: &mut P, out: &'a mut [u8]) -> Result<&'a [u8]> {
+        let config = platform.network().config()?;
+        let link = platform.network().link_state()?;
+        let mut len = 0;
+
+        append(out, &mut len, b"200 link=")?;
+        append(
+            out,
+            &mut len,
+            match link {
+                LinkState::Down => b"down",
+                LinkState::Up => b"up",
+            },
+        )?;
+        append(out, &mut len, b" mac=")?;
+        append_mac(out, &mut len, config.mac)?;
+        append(out, &mut len, b" ip=")?;
+        append_ipv4(out, &mut len, config.ipv4.address)?;
+        append(out, &mut len, b"/")?;
+        append_u8(out, &mut len, config.ipv4.prefix_len)?;
+
+        if let Some(gateway) = config.gateway {
+            append(out, &mut len, b" gw=")?;
+            append_ipv4(out, &mut len, gateway)?;
+        }
+
+        append(out, &mut len, b" mtu=")?;
+        append_u16(out, &mut len, config.mtu)?;
+        append(out, &mut len, b"\n")?;
+
+        Ok(&out[..len])
+    }
+
     fn handle_request<'a, P: Platform>(
         platform: &mut P,
         request: &[u8],
@@ -102,6 +136,8 @@ impl<const RX: usize, const TX: usize, const SCRATCH: usize> CommandAppliance<RX
             Self::write_identity(platform, response)
         } else if request == b"GET /sealed" {
             Self::write_sealed(platform, response)
+        } else if request == b"GET /network" {
+            Self::write_network(platform, response)
         } else if let Some(data) = request.strip_prefix(b"PUT /sealed ") {
             Self::store_sealed(platform, data)?;
             Self::write_response(response, &[b"204\n"])
@@ -206,6 +242,53 @@ fn append_hex(out: &mut [u8], len: &mut usize, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn append_mac(out: &mut [u8], len: &mut usize, mac: MacAddress) -> Result<()> {
+    for (i, byte) in mac.octets().iter().enumerate() {
+        if i != 0 {
+            append(out, len, b":")?;
+        }
+        append_hex(out, len, &[*byte])?;
+    }
+
+    Ok(())
+}
+
+fn append_ipv4(out: &mut [u8], len: &mut usize, address: Ipv4Address) -> Result<()> {
+    for (i, octet) in address.octets().iter().enumerate() {
+        if i != 0 {
+            append(out, len, b".")?;
+        }
+        append_u8(out, len, *octet)?;
+    }
+
+    Ok(())
+}
+
+fn append_u8(out: &mut [u8], len: &mut usize, value: u8) -> Result<()> {
+    append_u16(out, len, value as u16)
+}
+
+fn append_u16(out: &mut [u8], len: &mut usize, mut value: u16) -> Result<()> {
+    let mut digits = [0; 5];
+    let mut n = 0;
+
+    loop {
+        digits[n] = b'0' + (value % 10) as u8;
+        n += 1;
+        value /= 10;
+
+        if value == 0 {
+            break;
+        }
+    }
+
+    for digit in digits[..n].iter().rev() {
+        append(out, len, &[*digit])?;
+    }
+
+    Ok(())
+}
+
 fn trim_line(mut input: &[u8]) -> &[u8] {
     while matches!(input.last(), Some(b'\n' | b'\r')) {
         input = &input[..input.len() - 1];
@@ -220,8 +303,8 @@ mod tests {
 
     use super::*;
     use appliance_core::{
-        AlwaysPresent, Appliance, NetworkRx, NetworkTx, NullEntropy, NullPlatform, Platform,
-        StaticClock, StaticIdentity, VolatileStorage,
+        AlwaysPresent, Appliance, Ipv4Cidr, NetworkConfig, NetworkControl, NetworkRx, NetworkTx,
+        NullEntropy, NullPlatform, Platform, StaticClock, StaticIdentity, VolatileStorage,
     };
 
     #[test]
@@ -285,11 +368,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn command_appliance_reports_network_config() {
+        let mut platform = TestPlatform::new(b"GET /network\n");
+        let mut app = CommandAppliance::<64, 128, 16>::new();
+
+        app.poll(&mut platform).unwrap();
+
+        assert_eq!(
+            platform.network.sent(),
+            b"200 link=up mac=1a:55:89:a2:69:42 ip=10.0.0.1/24 gw=10.0.0.2 mtu=1500\n"
+        );
+    }
+
     struct TestNetwork {
         request: [u8; 64],
         request_len: usize,
         sent: [u8; 96],
         sent_len: usize,
+        config: NetworkConfig,
+        link: LinkState,
     }
 
     impl TestNetwork {
@@ -299,6 +397,13 @@ mod tests {
                 request_len: 0,
                 sent: [0; 96],
                 sent_len: 0,
+                config: NetworkConfig {
+                    mac: MacAddress::new([0x1a, 0x55, 0x89, 0xa2, 0x69, 0x42]),
+                    ipv4: Ipv4Cidr::new(Ipv4Address::new([10, 0, 0, 1]), 24),
+                    gateway: Some(Ipv4Address::new([10, 0, 0, 2])),
+                    mtu: 1500,
+                },
+                link: LinkState::Up,
             };
             network.set_request(request);
             network
@@ -312,6 +417,21 @@ mod tests {
 
         fn sent(&self) -> &[u8] {
             &self.sent[..self.sent_len]
+        }
+    }
+
+    impl NetworkControl for TestNetwork {
+        fn configure(&mut self, config: NetworkConfig) -> Result<()> {
+            self.config = config;
+            Ok(())
+        }
+
+        fn config(&self) -> Result<NetworkConfig> {
+            Ok(self.config)
+        }
+
+        fn link_state(&mut self) -> Result<LinkState> {
+            Ok(self.link)
         }
     }
 
