@@ -154,12 +154,12 @@ Use the existing Go SSH-agent appliance as the behavioral reference:
 Start with the protocol/state-machine crates and host tests before binding to
 either USB or virtio networking.
 
-The first Rust SSH-agent scaffold now models:
+The first Rust SSH-agent scaffold now models the OpenSSH agent payload shape:
 
-- `GET /pubkey`
-- `GET /fingerprint`
-- `GET /status`
-- `SIGN <message>`
+- `SSH_AGENTC_REQUEST_IDENTITIES` (`11`)
+- `SSH_AGENT_IDENTITIES_ANSWER` (`12`)
+- `SSH_AGENTC_SIGN_REQUEST` (`13`)
+- `SSH_AGENT_SIGN_RESPONSE` (`14`)
 
 It deliberately does not yet choose an ed25519 implementation or persistence
 backend; those stay behind traits so the same state machine can run on USB

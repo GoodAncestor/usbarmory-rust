@@ -2,10 +2,16 @@
 
 use appliance_core::{Appliance, Error, Platform, Result, TransportRx, TransportTx};
 
+pub const MSG_FAILURE: u8 = 5;
+pub const MSG_REQUEST_IDENTITIES: u8 = 11;
+pub const MSG_IDENTITIES_ANSWER: u8 = 12;
+pub const MSG_SIGN_REQUEST: u8 = 13;
+pub const MSG_SIGN_RESPONSE: u8 = 14;
+
 pub trait AgentKey {
-    fn public_key<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]>;
-    fn fingerprint<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]>;
-    fn sign<'a>(&mut self, message: &[u8], out: &'a mut [u8]) -> Result<&'a [u8]>;
+    fn public_key_blob<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]>;
+    fn comment<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]>;
+    fn sign<'a>(&mut self, message: &[u8], flags: u32, out: &'a mut [u8]) -> Result<&'a [u8]>;
 }
 
 pub struct AgentStatus {
@@ -24,6 +30,10 @@ impl<K, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
         Self { key, status }
     }
 
+    pub fn status(&self) -> &AgentStatus {
+        &self.status
+    }
+
     pub fn key(&self) -> &K {
         &self.key
     }
@@ -34,47 +44,76 @@ impl<K, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
 }
 
 impl<K: AgentKey, const RX: usize, const TX: usize> SshAgentAppliance<K, RX, TX> {
-    fn handle_request<'a>(&mut self, request: &[u8], response: &'a mut [u8]) -> Result<&'a [u8]> {
-        let request = trim_line(request);
+    fn handle_agent_payload<'a>(
+        &mut self,
+        request: &[u8],
+        response: &'a mut [u8],
+    ) -> Result<&'a [u8]> {
+        let Some((&message_type, body)) = request.split_first() else {
+            return failure(response);
+        };
 
-        if request == b"PING" {
-            write_response(response, &[b"200 pong\n"])
-        } else if request == b"GET /pubkey" {
-            let mut key = [0; TX];
-            let key = self.key.public_key(&mut key)?;
-            write_response(response, &[b"200 ", key, b"\n"])
-        } else if request == b"GET /fingerprint" {
-            let mut fingerprint = [0; 128];
-            let fingerprint = self.key.fingerprint(&mut fingerprint)?;
-            write_response(response, &[b"200 ", fingerprint, b"\n"])
-        } else if request == b"GET /status" {
-            self.write_status(response)
-        } else if let Some(message) = request.strip_prefix(b"SIGN ") {
-            let mut signature = [0; TX];
-            let signature = self.key.sign(message, &mut signature)?;
-            write_response(response, &[b"200 ", signature, b"\n"])
-        } else {
-            write_response(response, &[b"400\n"])
+        match message_type {
+            MSG_REQUEST_IDENTITIES => self.identities_answer(response),
+            MSG_SIGN_REQUEST => self.sign_response(body, response),
+            _ => failure(response),
         }
     }
 
-    fn write_status<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
-        write_response(
-            out,
-            &[
-                b"200 key_present=",
-                if self.status.key_present {
-                    b"true".as_slice()
-                } else {
-                    b"false".as_slice()
-                },
-                b" key_source=",
-                self.status.key_source.as_bytes(),
-                b" storage_backend=",
-                self.status.storage_backend.as_bytes(),
-                b"\n",
-            ],
-        )
+    fn identities_answer<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
+        let mut len = 0;
+        push(out, &mut len, MSG_IDENTITIES_ANSWER)?;
+
+        if !self.status.key_present {
+            write_u32(out, &mut len, 0)?;
+            return Ok(&out[..len]);
+        }
+
+        let mut key = [0; TX];
+        let mut comment = [0; 128];
+        let key = self.key.public_key_blob(&mut key)?;
+        let comment = self.key.comment(&mut comment)?;
+
+        write_u32(out, &mut len, 1)?;
+        write_string(out, &mut len, key)?;
+        write_string(out, &mut len, comment)?;
+        Ok(&out[..len])
+    }
+
+    fn sign_response<'a>(&mut self, body: &[u8], out: &'a mut [u8]) -> Result<&'a [u8]> {
+        if !self.status.key_present {
+            return failure(out);
+        }
+
+        let Some((key_blob, body)) = read_string(body) else {
+            return failure(out);
+        };
+        let Some((message, body)) = read_string(body) else {
+            return failure(out);
+        };
+        if body.len() < 4 {
+            return failure(out);
+        }
+        let flags = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
+
+        let mut expected_key = [0; TX];
+        let expected_key = self.key.public_key_blob(&mut expected_key)?;
+        if expected_key != key_blob {
+            return failure(out);
+        }
+
+        let mut signature = [0; TX];
+        let signature = self.key.sign(message, flags, &mut signature)?;
+
+        let mut len = 0;
+        let mut wire = [0; TX];
+        let mut wire_len = 0;
+        write_string(&mut wire, &mut wire_len, b"ssh-ed25519")?;
+        write_string(&mut wire, &mut wire_len, signature)?;
+
+        push(out, &mut len, MSG_SIGN_RESPONSE)?;
+        write_string(out, &mut len, &wire[..wire_len])?;
+        Ok(&out[..len])
     }
 }
 
@@ -89,33 +128,64 @@ impl<P: Platform, K: AgentKey, const RX: usize, const TX: usize> Appliance<P>
             Err(err) => return Err(err),
         };
         let mut response = [0; TX];
-        let response = self.handle_request(&request[..request_len], &mut response)?;
+        let response = self.handle_agent_payload(&request[..request_len], &mut response)?;
 
         platform.network().transmit(response)
     }
 }
 
-fn write_response<'a>(out: &'a mut [u8], chunks: &[&[u8]]) -> Result<&'a [u8]> {
-    let mut len = 0;
-
-    for chunk in chunks {
-        if out.len() - len < chunk.len() {
-            return Err(Error::BufferTooSmall);
-        }
-
-        out[len..len + chunk.len()].copy_from_slice(chunk);
-        len += chunk.len();
+fn failure(out: &mut [u8]) -> Result<&[u8]> {
+    if out.is_empty() {
+        return Err(Error::BufferTooSmall);
     }
 
-    Ok(&out[..len])
+    out[0] = MSG_FAILURE;
+    Ok(&out[..1])
 }
 
-fn trim_line(mut input: &[u8]) -> &[u8] {
-    while matches!(input.last(), Some(b'\n' | b'\r')) {
-        input = &input[..input.len() - 1];
+fn push(out: &mut [u8], len: &mut usize, byte: u8) -> Result<()> {
+    if *len == out.len() {
+        return Err(Error::BufferTooSmall);
     }
 
-    input
+    out[*len] = byte;
+    *len += 1;
+    Ok(())
+}
+
+fn write_u32(out: &mut [u8], len: &mut usize, value: u32) -> Result<()> {
+    append(out, len, &value.to_be_bytes())
+}
+
+fn write_string(out: &mut [u8], len: &mut usize, value: &[u8]) -> Result<()> {
+    if value.len() > u32::MAX as usize {
+        return Err(Error::InvalidInput);
+    }
+    write_u32(out, len, value.len() as u32)?;
+    append(out, len, value)
+}
+
+fn append(out: &mut [u8], len: &mut usize, data: &[u8]) -> Result<()> {
+    if out.len() - *len < data.len() {
+        return Err(Error::BufferTooSmall);
+    }
+
+    out[*len..*len + data.len()].copy_from_slice(data);
+    *len += data.len();
+    Ok(())
+}
+
+fn read_string(input: &[u8]) -> Option<(&[u8], &[u8])> {
+    if input.len() < 4 {
+        return None;
+    }
+
+    let len = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
+    if input.len() < 4 + len {
+        return None;
+    }
+
+    Some((&input[4..4 + len], &input[4 + len..]))
 }
 
 #[cfg(test)]
@@ -129,37 +199,57 @@ mod tests {
     };
 
     #[test]
-    fn reports_public_key_and_fingerprint() {
-        let mut platform = TestPlatform::new(b"GET /pubkey\n");
+    fn answers_identity_request() {
+        let mut platform = TestPlatform::new(&[MSG_REQUEST_IDENTITIES]);
         let mut app = test_app();
 
         app.poll(&mut platform).unwrap();
-        assert_eq!(platform.network.sent(), b"200 ssh-ed25519 AAAA test@id\n");
 
-        platform.network.set_request(b"GET /fingerprint\n");
-        app.poll(&mut platform).unwrap();
-        assert_eq!(platform.network.sent(), b"200 SHA256:test\n");
+        let expected = agent_identities_answer(b"key-blob", b"armory@test");
+        assert_eq!(platform.network.sent(), expected.as_slice());
     }
 
     #[test]
-    fn reports_status() {
-        let mut platform = TestPlatform::new(b"GET /status\n");
-        let mut app = test_app();
+    fn answers_empty_identity_request_when_key_absent() {
+        let mut platform = TestPlatform::new(&[MSG_REQUEST_IDENTITIES]);
+        let mut app = SshAgentAppliance::<TestKey, 128, 256>::new(
+            TestKey,
+            AgentStatus {
+                key_present: false,
+                key_source: "none",
+                storage_backend: "mmc",
+            },
+        );
 
         app.poll(&mut platform).unwrap();
+
         assert_eq!(
             platform.network.sent(),
-            b"200 key_present=true key_source=storage storage_backend=mmc\n"
+            &[MSG_IDENTITIES_ANSWER, 0, 0, 0, 0]
         );
     }
 
     #[test]
-    fn signs_request_data() {
-        let mut platform = TestPlatform::new(b"SIGN hello\n");
+    fn signs_agent_request() {
+        let request = agent_sign_request(b"key-blob", b"hello", 0);
+        let mut platform = TestPlatform::new(request.as_slice());
         let mut app = test_app();
 
         app.poll(&mut platform).unwrap();
-        assert_eq!(platform.network.sent(), b"200 sig:hello\n");
+
+        let expected = agent_sign_response(b"sig:hello:0");
+        assert_eq!(platform.network.sent(), expected.as_slice());
+    }
+
+    #[test]
+    fn rejects_unknown_signing_key() {
+        let request = agent_sign_request(b"other-key", b"hello", 0);
+        let mut platform = TestPlatform::new(request.as_slice());
+        let mut app = test_app();
+
+        app.poll(&mut platform).unwrap();
+
+        assert_eq!(platform.network.sent(), &[MSG_FAILURE]);
     }
 
     fn test_app() -> SshAgentAppliance<TestKey, 128, 256> {
@@ -176,18 +266,20 @@ mod tests {
     struct TestKey;
 
     impl AgentKey for TestKey {
-        fn public_key<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
-            copy(out, b"ssh-ed25519 AAAA test@id")
+        fn public_key_blob<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
+            copy(out, b"key-blob")
         }
 
-        fn fingerprint<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
-            copy(out, b"SHA256:test")
+        fn comment<'a>(&self, out: &'a mut [u8]) -> Result<&'a [u8]> {
+            copy(out, b"armory@test")
         }
 
-        fn sign<'a>(&mut self, message: &[u8], out: &'a mut [u8]) -> Result<&'a [u8]> {
+        fn sign<'a>(&mut self, message: &[u8], flags: u32, out: &'a mut [u8]) -> Result<&'a [u8]> {
             let mut len = 0;
             append(out, &mut len, b"sig:")?;
             append(out, &mut len, message)?;
+            append(out, &mut len, b":")?;
+            append_decimal(out, &mut len, flags)?;
             Ok(&out[..len])
         }
     }
@@ -200,13 +292,54 @@ mod tests {
         Ok(&out[..data.len()])
     }
 
-    fn append(out: &mut [u8], len: &mut usize, data: &[u8]) -> Result<()> {
-        if out.len() - *len < data.len() {
-            return Err(Error::BufferTooSmall);
+    fn append_decimal(out: &mut [u8], len: &mut usize, mut value: u32) -> Result<()> {
+        let mut digits = [0; 10];
+        let mut n = 0;
+
+        loop {
+            digits[n] = b'0' + (value % 10) as u8;
+            n += 1;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
         }
-        out[*len..*len + data.len()].copy_from_slice(data);
-        *len += data.len();
+
+        for digit in digits[..n].iter().rev() {
+            append(out, len, &[*digit])?;
+        }
+
         Ok(())
+    }
+
+    fn agent_identities_answer(key: &[u8], comment: &[u8]) -> std::vec::Vec<u8> {
+        let mut out = std::vec![MSG_IDENTITIES_ANSWER, 0, 0, 0, 1];
+        append_vec_string(&mut out, key);
+        append_vec_string(&mut out, comment);
+        out
+    }
+
+    fn agent_sign_request(key: &[u8], message: &[u8], flags: u32) -> std::vec::Vec<u8> {
+        let mut out = std::vec![MSG_SIGN_REQUEST];
+        append_vec_string(&mut out, key);
+        append_vec_string(&mut out, message);
+        out.extend_from_slice(&flags.to_be_bytes());
+        out
+    }
+
+    fn agent_sign_response(signature: &[u8]) -> std::vec::Vec<u8> {
+        let mut wire = std::vec::Vec::new();
+        append_vec_string(&mut wire, b"ssh-ed25519");
+        append_vec_string(&mut wire, signature);
+
+        let mut out = std::vec![MSG_SIGN_RESPONSE];
+        append_vec_string(&mut out, wire.as_slice());
+        out
+    }
+
+    fn append_vec_string(out: &mut std::vec::Vec<u8>, value: &[u8]) {
+        out.extend_from_slice(&(value.len() as u32).to_be_bytes());
+        out.extend_from_slice(value);
     }
 
     struct TestNetwork {
