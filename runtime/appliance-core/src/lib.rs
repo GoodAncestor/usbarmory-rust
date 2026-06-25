@@ -59,6 +59,92 @@ pub trait Transport: TransportRx + TransportTx {}
 
 impl<T> Transport for T where T: TransportRx + TransportTx {}
 
+pub const MESSAGE_HEADER_LEN: usize = 2;
+
+pub struct LengthPrefixed<T> {
+    inner: T,
+}
+
+impl<T> LengthPrefixed<T> {
+    pub const fn new(inner: T) -> Self {
+        Self { inner }
+    }
+
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+}
+
+impl<T: TransportRx> LengthPrefixed<T> {
+    pub fn receive_message<'a>(
+        &mut self,
+        frame: &mut [u8],
+        message: &'a mut [u8],
+    ) -> Result<&'a [u8]> {
+        receive_message(&mut self.inner, frame, message)
+    }
+}
+
+impl<T: TransportTx> LengthPrefixed<T> {
+    pub fn transmit_message(&mut self, frame: &mut [u8], message: &[u8]) -> Result<()> {
+        transmit_message(&mut self.inner, frame, message)
+    }
+}
+
+pub fn receive_message<'a, T: TransportRx>(
+    transport: &mut T,
+    frame: &mut [u8],
+    message: &'a mut [u8],
+) -> Result<&'a [u8]> {
+    let frame_len = transport.receive(frame)?;
+
+    if frame_len < MESSAGE_HEADER_LEN {
+        return Err(Error::InvalidInput);
+    }
+
+    let message_len = u16::from_be_bytes([frame[0], frame[1]]) as usize;
+    let frame_payload_len = frame_len - MESSAGE_HEADER_LEN;
+
+    if message_len > frame_payload_len {
+        return Err(Error::InvalidInput);
+    }
+
+    if message_len > message.len() {
+        return Err(Error::BufferTooSmall);
+    }
+
+    message[..message_len]
+        .copy_from_slice(&frame[MESSAGE_HEADER_LEN..MESSAGE_HEADER_LEN + message_len]);
+    Ok(&message[..message_len])
+}
+
+pub fn transmit_message<T: TransportTx>(
+    transport: &mut T,
+    frame: &mut [u8],
+    message: &[u8],
+) -> Result<()> {
+    if message.len() > u16::MAX as usize {
+        return Err(Error::InvalidInput);
+    }
+
+    let frame_len = MESSAGE_HEADER_LEN + message.len();
+    if frame_len > frame.len() {
+        return Err(Error::BufferTooSmall);
+    }
+
+    frame[..MESSAGE_HEADER_LEN].copy_from_slice(&(message.len() as u16).to_be_bytes());
+    frame[MESSAGE_HEADER_LEN..frame_len].copy_from_slice(message);
+    transport.transmit(&frame[..frame_len])
+}
+
 impl<T> TransportRx for T
 where
     T: NetworkRx,
@@ -254,5 +340,110 @@ impl<const STORAGE: usize> Platform for NullPlatform<STORAGE> {
 
     fn network(&mut self) -> &mut Self::Network {
         &mut self.network
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+
+    #[test]
+    fn length_prefixed_receives_message() {
+        let mut transport =
+            LengthPrefixed::new(TestTransport::new(&[0, 4, b'p', b'i', b'n', b'g']));
+        let mut frame = [0; 16];
+        let mut message = [0; 8];
+
+        let received = transport.receive_message(&mut frame, &mut message).unwrap();
+
+        assert_eq!(received, b"ping");
+    }
+
+    #[test]
+    fn length_prefixed_transmits_message() {
+        let mut transport = LengthPrefixed::new(TestTransport::new(&[]));
+        let mut frame = [0; 16];
+
+        transport.transmit_message(&mut frame, b"pong").unwrap();
+
+        assert_eq!(transport.inner().sent(), &[0, 4, b'p', b'o', b'n', b'g']);
+    }
+
+    #[test]
+    fn length_prefixed_rejects_short_frame() {
+        let mut transport = LengthPrefixed::new(TestTransport::new(&[0]));
+        let mut frame = [0; 16];
+        let mut message = [0; 8];
+
+        assert_eq!(
+            transport.receive_message(&mut frame, &mut message),
+            Err(Error::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn length_prefixed_rejects_oversized_message() {
+        let mut transport =
+            LengthPrefixed::new(TestTransport::new(&[0, 9, b'o', b'v', b'e', b'r']));
+        let mut frame = [0; 16];
+        let mut message = [0; 8];
+
+        assert_eq!(
+            transport.receive_message(&mut frame, &mut message),
+            Err(Error::InvalidInput)
+        );
+    }
+
+    struct TestTransport {
+        rx: [u8; 16],
+        rx_len: usize,
+        tx: [u8; 16],
+        tx_len: usize,
+    }
+
+    impl TestTransport {
+        fn new(rx: &[u8]) -> Self {
+            let mut transport = Self {
+                rx: [0; 16],
+                rx_len: rx.len(),
+                tx: [0; 16],
+                tx_len: 0,
+            };
+            transport.rx[..rx.len()].copy_from_slice(rx);
+            transport
+        }
+
+        fn sent(&self) -> &[u8] {
+            &self.tx[..self.tx_len]
+        }
+    }
+
+    impl TransportRx for TestTransport {
+        fn receive(&mut self, out: &mut [u8]) -> Result<usize> {
+            if self.rx_len == 0 {
+                return Err(Error::NotPresent);
+            }
+
+            if self.rx_len > out.len() {
+                return Err(Error::BufferTooSmall);
+            }
+
+            out[..self.rx_len].copy_from_slice(&self.rx[..self.rx_len]);
+            Ok(self.rx_len)
+        }
+    }
+
+    impl TransportTx for TestTransport {
+        fn transmit(&mut self, message: &[u8]) -> Result<()> {
+            if message.len() > self.tx.len() {
+                return Err(Error::BufferTooSmall);
+            }
+
+            self.tx[..message.len()].copy_from_slice(message);
+            self.tx_len = message.len();
+            Ok(())
+        }
     }
 }

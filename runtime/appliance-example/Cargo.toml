@@ -7,3 +7,11 @@ repository.workspace = true
 
 [dependencies]
 appliance-core = { path = "../appliance-core" }
+
+[[example]]
+name = "framed_host"
+required-features = ["std"]
+
+[features]
+default = []
+std = ["appliance-core/std"]

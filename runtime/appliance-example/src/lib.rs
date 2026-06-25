@@ -1,8 +1,8 @@
 #![no_std]
 
 use appliance_core::{
-    Appliance, DeviceIdentity, Error, Platform, Presence, Result, SealedStorage, TransportRx,
-    TransportTx,
+    receive_message, transmit_message, Appliance, DeviceIdentity, Error, Platform, Presence,
+    Result, SealedStorage, TransportRx, TransportTx,
 };
 
 pub const KEY_SLOT: u32 = 1;
@@ -90,6 +90,25 @@ impl<const RX: usize, const TX: usize, const SCRATCH: usize> CommandAppliance<RX
 
         platform.storage().write(COMMAND_SLOT, data)
     }
+
+    fn handle_request<'a, P: Platform>(
+        platform: &mut P,
+        request: &[u8],
+        response: &'a mut [u8],
+    ) -> Result<&'a [u8]> {
+        if request == b"PING" {
+            Self::write_response(response, &[b"200 pong\n"])
+        } else if request == b"GET /identity" {
+            Self::write_identity(platform, response)
+        } else if request == b"GET /sealed" {
+            Self::write_sealed(platform, response)
+        } else if let Some(data) = request.strip_prefix(b"PUT /sealed ") {
+            Self::store_sealed(platform, data)?;
+            Self::write_response(response, &[b"204\n"])
+        } else {
+            Self::write_response(response, &[b"400\n"])
+        }
+    }
 }
 
 impl<const RX: usize, const TX: usize, const SCRATCH: usize> Default
@@ -113,20 +132,51 @@ impl<P: Platform, const RX: usize, const TX: usize, const SCRATCH: usize> Applia
         let request = trim_line(&request[..request_len]);
         let mut response = [0; TX];
 
-        let response = if request == b"PING" {
-            Self::write_response(&mut response, &[b"200 pong\n"])?
-        } else if request == b"GET /identity" {
-            Self::write_identity(platform, &mut response)?
-        } else if request == b"GET /sealed" {
-            Self::write_sealed(platform, &mut response)?
-        } else if let Some(data) = request.strip_prefix(b"PUT /sealed ") {
-            Self::store_sealed(platform, data)?;
-            Self::write_response(&mut response, &[b"204\n"])?
-        } else {
-            Self::write_response(&mut response, &[b"400\n"])?
-        };
+        let response = Self::handle_request(platform, request, &mut response)?;
 
         platform.network().transmit(response)
+    }
+}
+
+pub struct FramedCommandAppliance<
+    const FRAME: usize = 192,
+    const RX: usize = 128,
+    const TX: usize = 160,
+    const SCRATCH: usize = 64,
+>;
+
+impl<const FRAME: usize, const RX: usize, const TX: usize, const SCRATCH: usize>
+    FramedCommandAppliance<FRAME, RX, TX, SCRATCH>
+{
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl<const FRAME: usize, const RX: usize, const TX: usize, const SCRATCH: usize> Default
+    for FramedCommandAppliance<FRAME, RX, TX, SCRATCH>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<P: Platform, const FRAME: usize, const RX: usize, const TX: usize, const SCRATCH: usize>
+    Appliance<P> for FramedCommandAppliance<FRAME, RX, TX, SCRATCH>
+{
+    fn poll(&mut self, platform: &mut P) -> Result<()> {
+        let mut frame = [0; FRAME];
+        let mut request = [0; RX];
+        let request = match receive_message(platform.network(), &mut frame, &mut request) {
+            Ok(request) => trim_line(request),
+            Err(Error::NotPresent) => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        let mut response = [0; TX];
+        let response =
+            CommandAppliance::<RX, TX, SCRATCH>::handle_request(platform, request, &mut response)?;
+
+        transmit_message(platform.network(), &mut frame, response)
     }
 }
 
@@ -220,6 +270,19 @@ mod tests {
         app.poll(&mut platform).unwrap();
 
         assert_eq!(platform.network.sent(), b"");
+    }
+
+    #[test]
+    fn framed_command_appliance_uses_length_prefix() {
+        let mut platform = TestPlatform::new(&[0, 4, b'P', b'I', b'N', b'G']);
+        let mut app = FramedCommandAppliance::<64, 64, 96, 16>::new();
+
+        app.poll(&mut platform).unwrap();
+
+        assert_eq!(
+            platform.network.sent(),
+            &[0, 9, b'2', b'0', b'0', b' ', b'p', b'o', b'n', b'g', b'\n']
+        );
     }
 
     struct TestNetwork {
